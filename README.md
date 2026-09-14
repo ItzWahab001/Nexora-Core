@@ -1,216 +1,128 @@
-# 🤖 All-In-One Discord Bot
+# Professional Discord Voice Onboarding + All-in-One Bot
 
-A modular, production-oriented Discord bot built with **discord.py 2.x**, slash commands,
-buttons, select menus, and modals. Every major feature has its own dedicated interactive
-panel, all reachable from a single `/menu` control center.
+A modular Discord.py bot centered around role-based voice onboarding, verification, tickets, applications, giveaways, moderation, AI, music, welcome/goodbye, custom commands, statistics, SQLite persistence, and restart recovery.
 
-## Features
+## Important Discord configuration
 
-- 🎫 **Tickets** — multi-category panels, claim/add/remove/rename/transcript/close/delete
-- 🎵 **Music** — yt-dlp powered playback with a live Now Playing panel
-- 🎉 **Giveaways** — persistent entry buttons, auto-end, reroll, cancel
-- 🤖 **AI Chat** — swappable OpenAI-compatible provider, per-user conversation memory
-- 🛡️ **Moderation** — ban/kick/timeout/warn with role-hierarchy safety checks
-- 🚨 **AutoMod** — spam, invite, link, word-filter, and mention-spam protection
-- ✅ **Verification** — one-click role-gated verification
-- 👋 **Welcome / Goodbye** — templated join/leave messages
-- 🎭 **Auto Role** — automatic role assignment on join
-- ⚙️ **Custom Commands** — guild-defined `!trigger` → response commands
-- 📋 **Logging** — centralized, configurable event log channel
-- 🔧 **Utilities** — ping, userinfo, serverinfo, roleinfo, channelinfo, botinfo, uptime, invite
-- 🔐 **Admin Panel** — one place to find every system's configuration commands
+Create these roles/channels first (or use your own IDs):
+- `New Member` role
+- `Verified` role
+- `Staff` role
+- `🌱・Greetings / Introduction` voice channel
+- verification text channel
 
-## Requirements
+### Permission architecture
 
-- Python 3.11+
-- An `ffmpeg` binary on your system PATH (required for music playback)
-- A Discord bot application + token
-- (Optional) An OpenAI-compatible API key for AI chat
+The bot does not rely on hidden buttons for security. Use Discord role/channel permission overwrites:
 
-## Installation
+**@everyone**
+- Normal public channels: denied until your server policy allows them.
+- Staff channels: denied.
 
-```bash
-git clone <your-repo-url>
-cd bot
-python -m venv venv
-source venv/bin/activate     # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env
-```
+**New Member**
+- Allow View Channel + Connect/Speak only for the onboarding VC.
+- Allow View Channel in verification channel.
+- Deny normal community categories/channels.
 
-Edit `.env` and fill in `DISCORD_TOKEN` at minimum. See **.env configuration** below.
+**Verified**
+- Allow normal community categories/channels.
+- Never grant staff/private category access.
 
-## Discord Developer Portal Setup
+The bot can assign/remove roles, but it cannot magically override a bad server permission layout. Configure category overwrites carefully and keep the bot role above `New Member` and `Verified`.
 
-1. Go to https://discord.com/developers/applications and create a New Application.
-2. Under **Bot**, click "Add Bot", then copy the token into `.env` as `DISCORD_TOKEN`.
-3. Under **Bot > Privileged Gateway Intents**, enable:
-   - **Server Members Intent** (required — welcome/goodbye, autorole, userinfo)
-   - **Message Content Intent** (required — custom commands, AI channel replies)
-4. Under **OAuth2 > URL Generator**, select scopes `bot` and `applications.commands`,
-   and the bot permissions listed below, then use the generated URL to invite the bot.
+## Install
 
-## Required Intents
+1. Install Python 3.11+.
+2. Install FFmpeg and ensure `ffmpeg` is on PATH.
+3. Create a virtual environment.
+4. Install requirements:
+   `python -m pip install -r requirements.txt`
+5. Copy `.env.example` to `.env`.
+6. Put your bot token in `.env`.
+7. In the Discord Developer Portal, enable **Server Members Intent**, **Message Content Intent**, and **Voice State Intent** as required by this project.
+8. Invite the bot with the permissions it needs, including Manage Roles, Manage Channels, View Channels, Connect, Speak, Send Messages, Embed Links, Read Message History, and moderation permissions for moderation commands.
+9. Start:
+   `python bot.py`
 
-- `guilds`
-- `members` (privileged)
-- `message_content` (privileged)
-- `voice_states` (for music)
+## First onboarding setup
 
-These are already set in `main.py` (`INTENTS`) — you only need to enable the privileged
-ones in the Developer Portal as described above.
+After the bot is online, an administrator can run:
 
-## Required Permissions
+`/onboarding setup <voice channel> <verification channel> <new member role> <verified role>`
 
-At minimum: View Channels, Send Messages, Embed Links, Attach Files, Manage Messages,
-Manage Channels, Manage Roles, Kick Members, Ban Members, Moderate Members, Connect,
-Speak, Read Message History, **Manage Server** (required for `/automod setup` to create
-a native Discord AutoMod rule — without it, our custom AutoMod filters still work, just
-not the native-rule layer). For simplicity during setup, granting **Administrator** is
-easiest, but scope it down for production.
+Then run `/verification panel` in the verification channel.
 
-**Important role ordering:** the bot's own role must sit *above* any role it needs to
-manage (tickets' overwrite creation, autorole assignment, moderation actions). The bot
-will refuse to act on members/roles above its own position — see `utils/permissions.py`.
+Set rules and welcome speech with:
+- `/onboarding message`
+- `/onboarding rules`
 
-## .env Configuration
+The bot reconnects to the configured onboarding VC after restart.
 
-See `.env.example` for the full list. Key variables:
+## Voice/TTS notes
 
-| Variable | Purpose |
-|---|---|
-| `DISCORD_TOKEN` | **Required.** Your bot's token. Never commit this. |
-| `DEV_GUILD_ID` | Optional. Set during development for instant (guild-scoped) slash command sync. |
-| `OWNER_IDS` | Comma-separated Discord user IDs with bot-owner access (`/admin reload`, `/admin sync`). |
-| `AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` | AI chat provider config (OpenAI-compatible). |
-| `DATABASE_PATH` | SQLite file path, defaults to `data/bot.db`. |
-| `LOG_LEVEL` / `LOG_FILE` | Logging verbosity and output file. |
+TTS uses an interface (`TTSProvider`) and the default implementation is Edge TTS. Generated audio is cached in `data/tts`. FFmpeg is required to play MP3 audio into Discord voice.
 
-## Database Setup
+A Discord voice channel can have one bot connection per guild. The implementation therefore uses a single persistent onboarding connection per guild and moves that connection to the onboarding member's voice channel only when speech is needed. If your server requires the bot to remain permanently in the fixed onboarding VC while simultaneously speaking privately to several members, Discord's guild voice model does not provide independent bot voice connections to multiple channels in the same guild. For true per-member simultaneous voice rooms, create temporary onboarding VCs and configure a dedicated bot connection per room/guild architecture.
 
-No manual setup needed. On first run, `database/database.py` creates `data/bot.db` and
-applies the schema in `database/models.py` automatically via `database/migrations.py`
-(which uses SQLite's `PRAGMA user_version` for future schema versioning).
+## Tickets
 
-## Running the Bot
+`/ticket-panel` posts the persistent ticket button. Configure `ticket_category_id` and `staff_role_id` in SQLite or extend the admin configuration command for your server.
 
-```bash
-python main.py
-```
+Ticket records persist in SQLite. Ticket controls are registered as persistent views after restart.
 
-On startup you'll see:
+## Applications
 
-```
-💾 Database: Connected
-📦 Cogs: 16/16 loaded
-🔐 Persistent views restored.
-⚡ Commands: Synced N commands ...
-🤖 Bot: Online as YourBot#0000
-🔐 Security: Active
-```
+`/application-panel` posts a modal-based application panel.
+Staff can inspect with `/applications` and decide with `/application-review <id> accept|deny`.
 
-Then run `/menu` in your server to open the control center.
+## Giveaways
 
-## Troubleshooting
+`/giveaway <duration_seconds> <winners> <prize>` creates a persistent button giveaway.
+`/giveaway-reroll <id>` rerolls.
+`/giveaway-cancel <id>` cancels.
 
-- **Slash commands don't show up:** global syncs can take up to an hour to propagate.
-  Set `DEV_GUILD_ID` in `.env` during development for instant guild-scoped sync.
-- **Music doesn't play / errors about ffmpeg:** install ffmpeg and ensure it's on PATH.
-- **"Missing Access" errors:** check the bot's role is above the roles/channels it's
-  trying to manage, and that it has the relevant permission.
-- **AI commands say "not configured":** set `AI_API_KEY` in `.env` and restart.
-- **Privileged intent errors on connect:** enable Server Members + Message Content
-  intents in the Developer Portal (see above).
+## Moderation
 
-## Adding Cogs
+Available:
+- `/ban`
+- `/kick`
+- `/timeout`
+- `/warn`
+- `/warnings`
+- `/clear`
+- `/slowmode`
+- `/lock`
+- `/unlock`
 
-1. Create `cogs/your_feature.py` with a `class YourFeature(commands.Cog)` and an
-   `async def setup(bot): await bot.add_cog(YourFeature(bot))` at the bottom.
-2. Add `"cogs.your_feature"` to the `COGS` list in `main.py`.
-3. Add any new tables to `database/models.py` (`SCHEMA_STATEMENTS`) and matching
-   accessor methods to `database/database.py`.
+All destructive moderation actions use Discord permission checks and write case/warning history to SQLite.
 
-## Adding New Panels
+## AI
 
-1. Create `views/your_panel.py` with a `build_your_panel(...)` function returning
-   `(embed, view)`, using `views/common.PanelView` as the base so Home/Back/Close work
-   automatically.
-2. Add an entry to `FEATURES` in `views/main_menu.py` and a branch in `route_to_panel()`.
+Configure `AI_API_KEY`, `AI_BASE_URL`, and `AI_MODEL`. `/ai <prompt>` uses an OpenAI-compatible chat-completions endpoint. API keys are never hardcoded.
 
-## Adding Future Features
+## Music
 
-The architecture is intentionally split (database / cogs / views / services / utils) so
-new systems — economy, leveling, reaction roles, polls, reminders, a web dashboard, etc.
-— can be added as new files without touching existing ones:
+`/play`, `/pause`, `/resume`, `/skip`, `/stop` are included. Music uses yt-dlp + FFmpeg. Respect the terms and policies of any media service you use.
 
-- New persistent data → new table(s) in `database/models.py` + methods in `database/database.py`.
-- New commands → new cog in `cogs/`.
-- New interactive UI → new view in `views/`, linked from `views/main_menu.py`.
-- New external integration (a different AI provider, Redis, PostgreSQL) → new file in
-  `services/`, swapped in behind the same interface the cogs already call.
+## Security
 
-## Deployment Guidance
+Never commit `.env`, the SQLite database, or generated TTS audio to source control. Keep the bot's role below only the roles it is intended to manage, and above `New Member`/`Verified` if it must assign them.
 
-- Run under a process manager (`systemd`, `pm2`, Docker) so the bot restarts on crash.
-- SQLite (WAL mode is enabled) is fine for small-to-medium bots; for very large
-  multi-guild deployments, swap `database/database.py`'s backend for PostgreSQL —
-  the rest of the codebase only calls the `Database` class's methods, not SQL directly.
-- Keep `.env` out of version control (`.gitignore` it) and never log the token.
-- Back up `data/bot.db` regularly if you don't migrate to a managed database.
+## QA checklist
 
+Before production:
+- Test new-member role assignment.
+- Test category/channel overwrites with a non-admin test account.
+- Test joining/leaving/rejoining onboarding VC.
+- Test bot restart and voice reconnection.
+- Test verification role changes.
+- Test ticket controls after restart.
+- Test application persistence.
+- Test giveaway ending/reroll/cancel.
+- Test moderation hierarchy and permissions.
+- Test FFmpeg/TTS on the actual host.
+- Test AI provider rate/error responses.
 
-## Production music + AI fixes
+## Scope note
 
-This version includes a `Dockerfile` that installs FFmpeg, libopus and Node.js 22 automatically.
-Node.js 22 is enabled for current yt-dlp YouTube EJS support, while `yt-dlp[default]` installs
-the matching EJS package.
-
-For AI chat, set:
-```env
-AI_API_KEY=your_real_key
-AI_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-4o-mini
-```
-Then restart the bot.
-
-AI commands are `/ai`, `/ask`, and `/chat`. AI configuration is now under
-`/aiconfig setup`, `/aiconfig enable`, `/aiconfig disable`, `/aiconfig channel`,
-and `/aiconfig reset`. This avoids a Discord application-command name collision.
-
-Music now checks FFmpeg before connecting, uses a safe captured asyncio event
-loop for queue advancement, uses fresh yt-dlp extractor instances, has bounded
-network retries/timeouts, and reports setup failures instead of remaining on
-Discord's "thinking..." state.
-
-The music queue command is `/clearqueue` because `/clear` is reserved for the
-moderation message-delete command.
-
-
-### Discord voice/DAVE
-
-Discord voice requires the current DAVE-capable discord.py voice extra. This build pins discord.py 2.7.1 with its `voice` extra, which installs the required `davey` dependency. The Docker health check fails the build if davey, FFmpeg, Node, or the Python imports are missing.
-
-AI slash commands acknowledge the interaction before database/provider work, preventing Discord's 3-second "application did not respond" failure when the database or AI provider is slow.
-
-## Railway (recommended)
-
-This repository contains `railway.json` and a root `Dockerfile`. Railway should build the
-Dockerfile, which installs Python, Node.js 22, FFmpeg, libopus, discord.py voice/DAVE support,
-and yt-dlp's EJS package. The build runs `healthcheck.py` and fails early if voice prerequisites
-are missing.
-
-Set these Railway Variables (do not put real secrets in GitHub):
-
-- `DISCORD_TOKEN` = your bot token
-- `AI_API_KEY` = your real provider key (or leave unset if AI is not needed)
-- `AI_BASE_URL` = `https://api.openai.com/v1` for OpenAI
-- `AI_MODEL` = `gpt-4o-mini` (or a model your provider actually supports)
-
-After changing Variables, redeploy/restart the service.
-
-### Music note
-
-YouTube extraction changes over time. Current yt-dlp requires an external JavaScript runtime and
-its EJS challenge solver for full YouTube support; this build provides Node.js 22 and installs
-`yt-dlp[default]`. Some YouTube requests can still require a PO Token depending on YouTube's
-current enforcement; that is a YouTube-side limitation rather than a Discord voice bug.
+This package is a complete runnable baseline with real implementations for the requested systems. Server-specific Discord permission layouts, third-party API credentials, FFmpeg installation, and provider policies necessarily depend on the deployment environment.
