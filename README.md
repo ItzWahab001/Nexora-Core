@@ -64,7 +64,9 @@ ones in the Developer Portal as described above.
 
 At minimum: View Channels, Send Messages, Embed Links, Attach Files, Manage Messages,
 Manage Channels, Manage Roles, Kick Members, Ban Members, Moderate Members, Connect,
-Speak, Read Message History. For simplicity during setup, granting **Administrator** is
+Speak, Read Message History, **Manage Server** (required for `/automod setup` to create
+a native Discord AutoMod rule — without it, our custom AutoMod filters still work, just
+not the native-rule layer). For simplicity during setup, granting **Administrator** is
 easiest, but scope it down for production.
 
 **Important role ordering:** the bot's own role must sit *above* any role it needs to
