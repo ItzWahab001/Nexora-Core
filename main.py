@@ -69,6 +69,11 @@ class AllInOneBot(commands.Bot):
             logger.info("🎵 FFmpeg: %s", ffmpeg)
         else:
             logger.error("🎵 FFmpeg: NOT FOUND — music playback will fail until FFmpeg is installed.")
+        try:
+            import davey  # type: ignore
+            logger.info("🔊 DAVE: davey %s loaded", getattr(davey, "__version__", "installed"))
+        except Exception:
+            logger.exception("🔊 DAVE: davey is NOT available — voice commands will fail")
         if config.ai_api_key:
             logger.info("🤖 AI: configured (%s)", config.ai_model)
         else:

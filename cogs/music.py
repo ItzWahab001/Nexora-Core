@@ -41,68 +41,76 @@ class Music(commands.Cog):
         await interaction.response.defer(thinking=True)
 
         try:
-            state = await asyncio.wait_for(music_service.connect(channel), timeout=15)
+            track = await asyncio.wait_for(resolve_track(query, interaction.user.id), timeout=30)
         except asyncio.TimeoutError:
-            await interaction.followup.send(
-                embed=error_embed(
-                    "Couldn't Join Voice",
-                    "Connecting to the voice channel timed out after 15s. This almost always means "
-                    "the server hosting this bot is blocking the UDP traffic Discord voice needs "
-                    "(common on some free/shared hosts). Try a different host, or check its firewall "
-                    "allows outbound UDP.",
-                )
-            )
+            await interaction.followup.send(embed=error_embed(
+                "Search Timed Out",
+                "YouTube/media search took too long. Try a direct URL or a shorter search.",
+            ))
+            return
+        except Exception as exc:
+            logger.exception("Failed to resolve track")
+            await interaction.followup.send(embed=error_embed("Playback Error", f"Couldn't find that track: {exc}"))
+            return
+
+        try:
+            state = await asyncio.wait_for(music_service.connect(channel), timeout=20)
+        except asyncio.TimeoutError:
+            await interaction.followup.send(embed=error_embed(
+                "Voice Connection Timed Out",
+                "Discord voice connection timed out. The host must allow outbound UDP voice traffic.",
+            ))
             return
         except discord.ClientException as exc:
             await interaction.followup.send(embed=error_embed("Couldn't Join Voice", str(exc)))
             return
         except Exception as exc:
-            await interaction.followup.send(
-                embed=error_embed("Music Setup Error", str(exc))
-            )
+            logger.exception("Voice connection failed")
+            await interaction.followup.send(embed=error_embed("Music Setup Error", str(exc)))
             return
 
         state.text_channel_id = interaction.channel_id
-
-        async def on_track_end() -> None:
-            await self._advance_queue(interaction.guild_id)
-
-        state.on_track_end = on_track_end
-
-        try:
-            track = await asyncio.wait_for(resolve_track(query, interaction.user.id), timeout=20)
-        except asyncio.TimeoutError:
-            await interaction.followup.send(
-                embed=error_embed(
-                    "Search Timed Out",
-                    "Looking that up took longer than 20s and was cancelled. This can happen if "
-                    "YouTube is rate-limiting or blocking this server's IP, or if there's a network "
-                    "issue reaching it. Try again, or try a more specific search term / direct URL.",
-                )
-            )
-            return
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Failed to resolve track")
-            await interaction.followup.send(embed=error_embed("Playback Error", f"Couldn't find or play that: {exc}"))
-            return
+        if state.on_track_end is None:
+            async def on_track_end() -> None:
+                await self._advance_queue(interaction.guild_id)
+            state.on_track_end = on_track_end
 
         if state.is_playing() or state.is_paused():
             state.queue.append(track)
             await interaction.followup.send(embed=success_embed("Added to Queue", f"**{track.title}** — position #{len(state.queue)}"))
-        else:
+            return
+
+        try:
             music_service.play_track(state, track)
-            await interaction.followup.send(embed=success_embed("Now Playing", f"**{track.title}**"))
+        except Exception as exc:
+            logger.exception("Failed to start FFmpeg playback")
+            await interaction.followup.send(embed=error_embed("Playback Start Failed", str(exc)))
+            return
+        await interaction.followup.send(embed=success_embed("Now Playing", f"**{track.title}**"))
 
     async def _advance_queue(self, guild_id: int) -> None:
         state = music_service.get_state(guild_id)
         if state.loop and state.current:
-            music_service.play_track(state, state.current)
+            current = state.current
+            try:
+                refreshed = await asyncio.wait_for(resolve_track(current.url, current.requested_by), timeout=30)
+                music_service.play_track(state, refreshed)
+            except Exception:
+                logger.exception("Failed to replay looped track")
             return
-        if state.queue:
-            next_track = state.queue.pop(0)
-            music_service.play_track(state, next_track)
-        else:
+
+        if not state.queue:
             state.current = None
+            return
+
+        next_track = state.queue.pop(0)
+        try:
+            # Stream URLs can expire; refresh from the original page/search URL.
+            refreshed = await asyncio.wait_for(resolve_track(next_track.url, next_track.requested_by), timeout=30)
+            music_service.play_track(state, refreshed)
+        except Exception:
+            logger.exception("Failed to start next queued track")
+            await self._advance_queue(guild_id)
 
     @app_commands.command(name="pause", description="Pause the current track")
     async def pause(self, interaction: discord.Interaction) -> None:

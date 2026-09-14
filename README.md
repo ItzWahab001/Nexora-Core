@@ -161,9 +161,9 @@ new systems — economy, leveling, reaction roles, polls, reminders, a web dashb
 
 ## Production music + AI fixes
 
-This version includes a `Dockerfile` that installs FFmpeg, libopus and Deno
-automatically. Deno is used by current yt-dlp for full YouTube support, while
-`yt-dlp[default]` installs the matching EJS package.
+This version includes a `Dockerfile` that installs FFmpeg, libopus and Node.js 22 automatically.
+Node.js 22 is enabled for current yt-dlp YouTube EJS support, while `yt-dlp[default]` installs
+the matching EJS package.
 
 For AI chat, set:
 ```env
@@ -184,3 +184,33 @@ Discord's "thinking..." state.
 
 The music queue command is `/clearqueue` because `/clear` is reserved for the
 moderation message-delete command.
+
+
+### Discord voice/DAVE
+
+Discord voice requires the current DAVE-capable discord.py voice extra. This build pins discord.py 2.7.1 with its `voice` extra, which installs the required `davey` dependency. The Docker health check fails the build if davey, FFmpeg, Node, or the Python imports are missing.
+
+AI slash commands acknowledge the interaction before database/provider work, preventing Discord's 3-second "application did not respond" failure when the database or AI provider is slow.
+
+## Railway (recommended)
+
+This repository contains `railway.json` and a root `Dockerfile`. Railway should build the
+Dockerfile, which installs Python, Node.js 22, FFmpeg, libopus, discord.py voice/DAVE support,
+and yt-dlp's EJS package. The build runs `healthcheck.py` and fails early if voice prerequisites
+are missing.
+
+Set these Railway Variables (do not put real secrets in GitHub):
+
+- `DISCORD_TOKEN` = your bot token
+- `AI_API_KEY` = your real provider key (or leave unset if AI is not needed)
+- `AI_BASE_URL` = `https://api.openai.com/v1` for OpenAI
+- `AI_MODEL` = `gpt-4o-mini` (or a model your provider actually supports)
+
+After changing Variables, redeploy/restart the service.
+
+### Music note
+
+YouTube extraction changes over time. Current yt-dlp requires an external JavaScript runtime and
+its EJS challenge solver for full YouTube support; this build provides Node.js 22 and installs
+`yt-dlp[default]`. Some YouTube requests can still require a PO Token depending on YouTube's
+current enforcement; that is a YouTube-side limitation rather than a Discord voice bug.

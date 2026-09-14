@@ -17,7 +17,6 @@ RUN pip install --upgrade pip setuptools wheel \
     && pip install -r requirements.txt
 
 COPY . .
-
 RUN mkdir -p data logs \
     && python healthcheck.py
 

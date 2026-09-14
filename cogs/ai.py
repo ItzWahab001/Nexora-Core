@@ -39,20 +39,12 @@ class AI(commands.Cog):
         return False
 
     async def _chat(self, interaction: discord.Interaction, message: str) -> None:
-        if await self._rate_limited(interaction):
-            return
-
+        # A Discord interaction must be acknowledged within ~3 seconds.
+        # Defer BEFORE database/API work so a slow DB/provider can never produce
+        # the dreaded "The application did not respond" message.
         if interaction.guild_id is None:
             await interaction.response.send_message(
                 embed=error_embed("Server Only", "AI chat can only be used inside a Discord server."),
-                ephemeral=True,
-            )
-            return
-
-        settings = await self.bot.db.get_ai_settings(interaction.guild_id)
-        if settings and not settings["enabled"]:
-            await interaction.response.send_message(
-                embed=error_embed("AI Disabled", "An admin has disabled AI chat in this server. Try `/aiconfig enable`."),
                 ephemeral=True,
             )
             return
@@ -65,9 +57,37 @@ class AI(commands.Cog):
             )
             return
 
+        if await self._rate_limited(interaction):
+            return
+
         await interaction.response.defer(thinking=True)
+
+        try:
+            settings = await asyncio.wait_for(
+                self.bot.db.get_ai_settings(interaction.guild_id), timeout=5
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send(
+                embed=error_embed("Database Timeout", "The bot database took too long to respond. Please try again.")
+            )
+            return
+
+        if settings and not settings["enabled"]:
+            await interaction.followup.send(
+                embed=error_embed("AI Disabled", "An admin has disabled AI chat in this server. Try `/aiconfig enable`.")
+            )
+            return
+
         system_prompt = settings["system_prompt"] if settings else "You are a helpful, concise assistant inside a Discord server."
-        history_rows = await self.bot.db.get_ai_history(interaction.guild_id, interaction.user.id)
+        try:
+            history_rows = await asyncio.wait_for(
+                self.bot.db.get_ai_history(interaction.guild_id, interaction.user.id), timeout=5
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send(
+                embed=error_embed("Database Timeout", "The bot database took too long to respond. Please try again.")
+            )
+            return
         history = [{"role": r["role"], "content": r["content"]} for r in history_rows]
 
         try:
@@ -139,16 +159,23 @@ class AI(commands.Cog):
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or message.guild is None:
             return
-        settings = await self.bot.db.get_ai_settings(message.guild.id)
+        try:
+            settings = await asyncio.wait_for(self.bot.db.get_ai_settings(message.guild.id), timeout=5)
+        except asyncio.TimeoutError:
+            return
         if not settings or not settings["enabled"] or not settings["channel_id"]:
             return
-        if message.channel.id != settings["channel_id"]:
-            return
-        if not message.content.strip():
+        if message.channel.id != settings["channel_id"] or not message.content.strip():
             return
 
         async with message.channel.typing():
-            history_rows = await self.bot.db.get_ai_history(message.guild.id, message.author.id)
+            try:
+                history_rows = await asyncio.wait_for(
+                    self.bot.db.get_ai_history(message.guild.id, message.author.id), timeout=5
+                )
+            except asyncio.TimeoutError:
+                await message.reply(embed=error_embed("Database Timeout", "The bot database took too long to respond."))
+                return
             history = [{"role": r["role"], "content": r["content"]} for r in history_rows]
             try:
                 reply = await asyncio.wait_for(
