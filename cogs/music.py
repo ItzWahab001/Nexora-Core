@@ -56,6 +56,11 @@ class Music(commands.Cog):
         except discord.ClientException as exc:
             await interaction.followup.send(embed=error_embed("Couldn't Join Voice", str(exc)))
             return
+        except Exception as exc:
+            await interaction.followup.send(
+                embed=error_embed("Music Setup Error", str(exc))
+            )
+            return
 
         state.text_channel_id = interaction.channel_id
 
@@ -177,7 +182,7 @@ class Music(commands.Cog):
         else:
             await interaction.response.send_message(embed=error_embed("Invalid Position"), ephemeral=True)
 
-    @app_commands.command(name="clear", description="Clear the music queue")
+    @app_commands.command(name="clearqueue", description="Clear the music queue")
     async def clear(self, interaction: discord.Interaction) -> None:
         state = music_service.get_state(interaction.guild_id)
         music_service.clear_queue(state)

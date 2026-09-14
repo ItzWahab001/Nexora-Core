@@ -157,3 +157,30 @@ new systems — economy, leveling, reaction roles, polls, reminders, a web dashb
   the rest of the codebase only calls the `Database` class's methods, not SQL directly.
 - Keep `.env` out of version control (`.gitignore` it) and never log the token.
 - Back up `data/bot.db` regularly if you don't migrate to a managed database.
+
+
+## Production music + AI fixes
+
+This version includes a `Dockerfile` that installs FFmpeg, libopus and Deno
+automatically. Deno is used by current yt-dlp for full YouTube support, while
+`yt-dlp[default]` installs the matching EJS package.
+
+For AI chat, set:
+```env
+AI_API_KEY=your_real_key
+AI_BASE_URL=https://api.openai.com/v1
+AI_MODEL=gpt-4o-mini
+```
+Then restart the bot.
+
+AI commands are `/ai`, `/ask`, and `/chat`. AI configuration is now under
+`/aiconfig setup`, `/aiconfig enable`, `/aiconfig disable`, `/aiconfig channel`,
+and `/aiconfig reset`. This avoids a Discord application-command name collision.
+
+Music now checks FFmpeg before connecting, uses a safe captured asyncio event
+loop for queue advancement, uses fresh yt-dlp extractor instances, has bounded
+network retries/timeouts, and reports setup failures instead of remaining on
+Discord's "thinking..." state.
+
+The music queue command is `/clearqueue` because `/clear` is reserved for the
+moderation message-delete command.

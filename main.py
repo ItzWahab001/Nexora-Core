@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import os
+import shutil
 
 import discord
 from discord.ext import commands
@@ -62,6 +64,15 @@ class AllInOneBot(commands.Bot):
                 failed.append(cog)
                 logger.exception("Failed to load cog: %s", cog)
         logger.info("📦 Cogs: %s/%s loaded", loaded, len(COGS))
+        ffmpeg = os.getenv("FFMPEG_PATH") or shutil.which("ffmpeg")
+        if ffmpeg:
+            logger.info("🎵 FFmpeg: %s", ffmpeg)
+        else:
+            logger.error("🎵 FFmpeg: NOT FOUND — music playback will fail until FFmpeg is installed.")
+        if config.ai_api_key:
+            logger.info("🤖 AI: configured (%s)", config.ai_model)
+        else:
+            logger.warning("🤖 AI: not configured — set AI_API_KEY in .env.")
         if failed:
             logger.warning("The following cogs failed to load and were skipped: %s", ", ".join(failed))
 

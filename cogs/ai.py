@@ -7,6 +7,8 @@ Uses services/ai_service.py so the provider itself is swappable.
 
 from __future__ import annotations
 
+import asyncio
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -24,7 +26,7 @@ class AI(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    ai_group = app_commands.Group(name="ai", description="AI chat configuration")
+    ai_group = app_commands.Group(name="aiconfig", description="AI chat configuration")
 
     async def _rate_limited(self, interaction: discord.Interaction) -> bool:
         bucket = _cooldown.get_bucket(interaction)
@@ -48,13 +50,39 @@ class AI(commands.Cog):
             )
             return
 
+        if interaction.guild_id is None:
+            await interaction.response.send_message(
+                embed=error_embed("Server Only", "AI chat can only be used inside a Discord server."),
+                ephemeral=True,
+            )
+            return
+
+        message = message.strip()
+        if not message:
+            await interaction.response.send_message(
+                embed=error_embed("Empty Message", "Please enter a message for the AI."),
+                ephemeral=True,
+            )
+            return
+
         await interaction.response.defer(thinking=True)
         system_prompt = settings["system_prompt"] if settings else "You are a helpful, concise assistant inside a Discord server."
         history_rows = await self.bot.db.get_ai_history(interaction.guild_id, interaction.user.id)
         history = [{"role": r["role"], "content": r["content"]} for r in history_rows]
 
         try:
-            reply = await ai_service.get_response(system_prompt, history, message)
+            reply = await asyncio.wait_for(
+                ai_service.get_response(system_prompt, history, message),
+                timeout=50,
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send(
+                embed=error_embed(
+                    "AI Timeout",
+                    "The AI provider took too long to respond. Check the API settings/provider status and try again.",
+                )
+            )
+            return
         except AIServiceError as exc:
             await interaction.followup.send(embed=error_embed("AI Error", str(exc)))
             return
@@ -123,7 +151,18 @@ class AI(commands.Cog):
             history_rows = await self.bot.db.get_ai_history(message.guild.id, message.author.id)
             history = [{"role": r["role"], "content": r["content"]} for r in history_rows]
             try:
-                reply = await ai_service.get_response(settings["system_prompt"], history, message.content)
+                reply = await asyncio.wait_for(
+                    ai_service.get_response(settings["system_prompt"], history, message.content),
+                    timeout=50,
+                )
+            except asyncio.TimeoutError:
+                await message.reply(
+                    embed=error_embed(
+                        "AI Timeout",
+                        "The AI provider took too long to respond.",
+                    )
+                )
+                return
             except AIServiceError as exc:
                 await message.reply(embed=error_embed("AI Error", str(exc)))
                 return
