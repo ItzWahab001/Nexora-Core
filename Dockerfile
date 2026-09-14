@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/root/.deno/bin:${PATH}"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates libopus0 \
+    && apt-get install -y --no-install-recommends ffmpeg curl unzip ca-certificates libopus0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Current yt-dlp needs a supported JS runtime for full YouTube support.
