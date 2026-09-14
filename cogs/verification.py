@@ -32,7 +32,7 @@ class Verification(commands.Cog):
         except discord.Forbidden:
             await interaction.response.send_message("I cannot manage the configured roles. Check role hierarchy and permissions.", ephemeral=True)
 
-    @commands.hybrid_group(name="verification", fallback="panel")
+    @commands.hybrid_group(name="verification", fallback="status")
     @commands.has_guild_permissions(manage_guild=True)
     async def verification(self, ctx):
         await ctx.send(embed=embed("Server Verification", "Click **Verify** to unlock the community."), view=__import__("views.verification", fromlist=["VerificationView"]).VerificationView(self.bot))

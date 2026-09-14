@@ -1,7 +1,7 @@
 import asyncio, random
 from datetime import datetime, timedelta, timezone
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from utils.embeds import embed
 from views.giveaways import GiveawayView
 
@@ -51,7 +51,7 @@ class Giveaways(commands.Cog):
         for row in await self.bot.db.fetchall("SELECT id,ends_at FROM giveaways WHERE status='active'"):
             pass
 
-    @commands.tasks.loop(seconds=5)
+    @tasks.loop(seconds=5)
     async def finish_loop(self):
         rows = await self.bot.db.fetchall("SELECT * FROM giveaways WHERE status='active'")
         now = datetime.now(timezone.utc)
