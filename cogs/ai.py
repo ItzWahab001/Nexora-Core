@@ -42,17 +42,17 @@ class AI(commands.Cog):
         if await self._rate_limited(interaction):
             return
 
-        settings = await self.bot.db.get_ai_settings(interaction.guild_id)
-        if settings and not settings["enabled"]:
+        if interaction.guild_id is None:
             await interaction.response.send_message(
-                embed=error_embed("AI Disabled", "An admin has disabled AI chat in this server. Try `/ai enable`."),
+                embed=error_embed("Server Only", "AI chat can only be used inside a Discord server."),
                 ephemeral=True,
             )
             return
 
-        if interaction.guild_id is None:
+        settings = await self.bot.db.get_ai_settings(interaction.guild_id)
+        if settings and not settings["enabled"]:
             await interaction.response.send_message(
-                embed=error_embed("Server Only", "AI chat can only be used inside a Discord server."),
+                embed=error_embed("AI Disabled", "An admin has disabled AI chat in this server. Try `/aiconfig enable`."),
                 ephemeral=True,
             )
             return

@@ -26,6 +26,7 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch1",
+    "js_runtimes": ["node"],
     "source_address": "0.0.0.0",
     "socket_timeout": 15,
     "extractor_retries": 3,
