@@ -1,45 +1,50 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
-from utils.embeds import embed
-from views.applications import ApplicationPanelView
+
+from database import repo
+from utils.checks import require_admin
+from utils.embeds import success_embed, panel_embed
+from views.application_views import ApplicationPanelView
+
 
 class Applications(commands.Cog):
-    def __init__(self, bot): self.bot = bot
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.db = bot.db
 
-    @commands.hybrid_command(name="application-panel")
-    @commands.has_guild_permissions(manage_guild=True)
-    async def panel(self, ctx):
-        await ctx.send(embed=embed("📝 Applications", "Submit an application using the button below."),
-                       view=ApplicationPanelView(self.bot))
+    @app_commands.command(name="application-create-type", description="Create/update an application type with up to 5 questions")
+    @app_commands.describe(
+        name="Application type name (e.g. Staff, Partner)",
+        question1="Question 1", question2="Question 2", question3="Question 3",
+        question4="Question 4", question5="Question 5",
+    )
+    @require_admin()
+    async def create_type(self, interaction: discord.Interaction, name: str, question1: str,
+                           question2: str | None = None, question3: str | None = None,
+                           question4: str | None = None, question5: str | None = None):
+        questions = [q for q in [question1, question2, question3, question4, question5] if q]
+        await repo.set_application_type(self.db, interaction.guild_id, name, questions)
+        await interaction.response.send_message(
+            embed=success_embed("Application type saved", f"**{name}** now has {len(questions)} question(s)."),
+            ephemeral=True,
+        )
 
-    async def submit(self, interaction, a1, a2):
-        answers = f"Why join: {a1}\n\nAbout: {a2}"
-        cur = await self.bot.db.execute("INSERT INTO applications(guild_id,user_id,answers) VALUES(?,?,?)",
-                                        (interaction.guild.id, interaction.user.id, answers))
-        await interaction.response.send_message("Application submitted. Staff will review it.", ephemeral=True)
+    @app_commands.command(name="application-panel", description="Post the application panel in this channel")
+    @require_admin()
+    async def application_panel(self, interaction: discord.Interaction):
+        types = await repo.get_application_types(self.db, interaction.guild_id)
+        embed = panel_embed("📝 Applications", "Select an application type below to apply.",
+                             fields=[(t["app_type"], "Open", True) for t in types] or None)
+        await interaction.channel.send(embed=embed, view=ApplicationPanelView(self.db, [dict(t) for t in types], interaction.guild_id))
+        await interaction.response.send_message("Application panel posted.", ephemeral=True)
 
-    @commands.hybrid_command(name="applications")
-    @commands.has_guild_permissions(manage_guild=True)
-    async def applications(self, ctx):
-        rows = await self.bot.db.fetchall("SELECT id,user_id,status FROM applications WHERE guild_id=? ORDER BY id DESC LIMIT 15",
-                                          (ctx.guild.id,))
-        text = "\n".join(f"#{r['id']} — <@{r['user_id']}> — {r['status']}" for r in rows) or "No applications."
-        await ctx.send(embed=embed("Application History", text))
+    @app_commands.command(name="application-log-channel", description="Set where submitted applications are sent for review")
+    @require_admin()
+    async def set_log_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await repo.update_guild_settings(self.db, interaction.guild_id, application_log_channel_id=channel.id)
+        await interaction.response.send_message(embed=success_embed("Saved", f"Applications will be reviewed in {channel.mention}."), ephemeral=True)
 
-    @commands.hybrid_command(name="application-review")
-    @commands.has_guild_permissions(manage_guild=True)
-    async def review(self, ctx, application_id: int, decision: str):
-        decision = decision.lower()
-        if decision not in ("accept","deny"):
-            return await ctx.send("Decision must be accept or deny.")
-        row = await self.bot.db.fetchone("SELECT * FROM applications WHERE id=? AND guild_id=?", (application_id, ctx.guild.id))
-        if not row: return await ctx.send("Application not found.")
-        await self.bot.db.execute("UPDATE applications SET status=?,reviewer_id=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?",
-                                  (decision, ctx.author.id, application_id))
-        user = ctx.guild.get_member(row["user_id"])
-        if user:
-            try: await user.send(f"Your application in {ctx.guild.name} was **{decision}ed**.")
-            except discord.HTTPException: pass
-        await ctx.send(f"Application #{application_id} marked {decision}.")
 
-async def setup(bot): await bot.add_cog(Applications(bot))
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Applications(bot))

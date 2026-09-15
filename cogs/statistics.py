@@ -1,18 +1,72 @@
+import time
+
 import discord
+from discord import app_commands
 from discord.ext import commands
-from utils.embeds import embed
+
+from database import repo
+from utils.embeds import panel_embed
+
+
+def format_uptime(seconds: float) -> str:
+    seconds = int(seconds)
+    d, seconds = divmod(seconds, 86400)
+    h, seconds = divmod(seconds, 3600)
+    m, s = divmod(seconds, 60)
+    parts = []
+    if d:
+        parts.append(f"{d}d")
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    parts.append(f"{s}s")
+    return " ".join(parts)
+
 
 class Statistics(commands.Cog):
-    def __init__(self,bot): self.bot=bot
-    @commands.hybrid_command(name="stats")
-    async def stats(self,ctx):
-        g=ctx.guild
-        verified=await self.bot.db.fetchone("SELECT COUNT(*) c FROM verification WHERE guild_id=?",(g.id,))
-        tickets=await self.bot.db.fetchone("SELECT COUNT(*) c FROM tickets WHERE guild_id=?",(g.id,))
-        apps=await self.bot.db.fetchone("SELECT COUNT(*) c FROM applications WHERE guild_id=?",(g.id,))
-        giveaways=await self.bot.db.fetchone("SELECT COUNT(*) c FROM giveaways WHERE guild_id=?",(g.id,))
-        uptime=discord.utils.utcnow()-self.bot.start_time
-        e=embed("📊 Server Statistics",f"Members: **{g.member_count}**\nBots: **{sum(m.bot for m in g.members)}**\nHumans: **{sum(not m.bot for m in g.members)}**\nChannels: **{len(g.channels)}**\nRoles: **{len(g.roles)}**\nVerified: **{verified['c']}**\nTickets: **{tickets['c']}**\nApplications: **{apps['c']}**\nGiveaways: **{giveaways['c']}**\nBot uptime: **{uptime}**")
-        await ctx.send(embed=e)
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.db = bot.db
 
-async def setup(bot): await bot.add_cog(Statistics(bot))
+    @app_commands.command(name="stats", description="Show the server statistics dashboard")
+    async def stats(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        await interaction.response.defer()
+
+        humans = sum(1 for m in guild.members if not m.bot)
+        bots = sum(1 for m in guild.members if m.bot)
+        verified_row = await self.db.fetchone(
+            "SELECT COUNT(*) c FROM members WHERE guild_id=? AND is_verified=1", (guild.id,)
+        )
+        open_tickets = await repo.count_open_tickets(self.db, guild.id)
+        pending_apps = await self.db.fetchone(
+            "SELECT COUNT(*) c FROM applications WHERE guild_id=? AND status='pending'", (guild.id,)
+        )
+        active_giveaways = await self.db.fetchone(
+            "SELECT COUNT(*) c FROM giveaways WHERE guild_id=? AND status='active'", (guild.id,)
+        )
+        cases = await repo.count_cases(self.db, guild.id)
+        uptime = format_uptime(time.time() - self.bot.start_time)
+
+        embed = panel_embed(
+            f"📊 Statistics — {guild.name}", "",
+            fields=[
+                ("Members", str(guild.member_count), True),
+                ("Humans", str(humans), True),
+                ("Bots", str(bots), True),
+                ("Verified", str(verified_row["c"] if verified_row else 0), True),
+                ("Channels", str(len(guild.channels)), True),
+                ("Roles", str(len(guild.roles)), True),
+                ("Open Tickets", str(open_tickets), True),
+                ("Pending Applications", str(pending_apps["c"] if pending_apps else 0), True),
+                ("Active Giveaways", str(active_giveaways["c"] if active_giveaways else 0), True),
+                ("Moderation Cases", str(cases), True),
+                ("Bot Uptime", uptime, True),
+            ],
+        )
+        await interaction.followup.send(embed=embed)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Statistics(bot))

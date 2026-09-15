@@ -1,7 +1,0 @@
-.env
-*.sqlite3
-data/tts/
-data/logs/*.log
-__pycache__/
-*.pyc
-.venv/

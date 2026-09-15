@@ -1,128 +1,169 @@
-# Professional Discord Voice Onboarding + All-in-One Bot
+# All-in-One Discord Bot — Voice Onboarding Edition
 
-A modular Discord.py bot centered around role-based voice onboarding, verification, tickets, applications, giveaways, moderation, AI, music, welcome/goodbye, custom commands, statistics, SQLite persistence, and restart recovery.
+A production-oriented Discord bot built with `discord.py` 2.x, centered on
+**automatic voice-based member onboarding and verification**, plus a full
+suite of server-management systems (tickets, applications, giveaways,
+moderation, AI chat, music, welcome/goodbye, custom commands, statistics).
 
-## Important Discord configuration
+## ⚠️ Please read before deploying
 
-Create these roles/channels first (or use your own IDs):
-- `New Member` role
-- `Verified` role
-- `Staff` role
-- `🌱・Greetings / Introduction` voice channel
-- verification text channel
+This project was generated in one sitting to cover an extremely broad spec
+(12+ full subsystems). Every feature listed below is **real, wired-up code**
+— no `TODO`s, no placeholder functions, no fake buttons. But a codebase this
+size cannot be responsibly called "fully QA-tested in production across
+every edge case" without actually running it against a live Discord server,
+which I can't do from here (no network access in this environment, and no
+Discord bot token to test with). Please treat this as a strong, working
+first deployment candidate, and:
 
-### Permission architecture
+1. Run it in a **test server** first, not your live community.
+2. Read through `cogs/onboarding.py` and `voice/onboarding_manager.py`
+   carefully — that's the most complex and most important part.
+3. Come back with any error you hit; I'll fix it fast. Multi-user voice
+   race conditions, permission edge cases, and Discord API quirks are the
+   most likely places something needs a tweak once it meets real traffic.
 
-The bot does not rely on hidden buttons for security. Use Discord role/channel permission overwrites:
+## Setup
 
-**@everyone**
-- Normal public channels: denied until your server policy allows them.
-- Staff channels: denied.
+```bash
+python3.11 -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env
+# edit .env — at minimum set DISCORD_TOKEN
+```
 
-**New Member**
-- Allow View Channel + Connect/Speak only for the onboarding VC.
-- Allow View Channel in verification channel.
-- Deny normal community categories/channels.
+You also need **FFmpeg** installed and on your PATH (required for both
+voice onboarding TTS playback and music playback):
+- Windows: https://ffmpeg.org/download.html (add to PATH)
+- macOS: `brew install ffmpeg`
+- Linux: `sudo apt install ffmpeg`
 
-**Verified**
-- Allow normal community categories/channels.
-- Never grant staff/private category access.
+Run the bot:
 
-The bot can assign/remove roles, but it cannot magically override a bad server permission layout. Configure category overwrites carefully and keep the bot role above `New Member` and `Verified`.
+```bash
+python bot.py
+```
 
-## Install
+On first run, DM the bot's owner account and use the text command
+`!sync` (owner-only) once to register slash commands globally, or
+`!sync-guild` while inside your test server for instant per-guild sync.
 
-1. Install Python 3.11+.
-2. Install FFmpeg and ensure `ffmpeg` is on PATH.
-3. Create a virtual environment.
-4. Install requirements:
-   `python -m pip install -r requirements.txt`
-5. Copy `.env.example` to `.env`.
-6. Put your bot token in `.env`.
-7. In the Discord Developer Portal, enable **Server Members Intent**, **Message Content Intent**, and **Voice State Intent** as required by this project.
-8. Invite the bot with the permissions it needs, including Manage Roles, Manage Channels, View Channels, Connect, Speak, Send Messages, Embed Links, Read Message History, and moderation permissions for moderation commands.
-9. Start:
-   `python bot.py`
+## Voice Onboarding — the core feature
 
-## First onboarding setup
+Zero-config default: `TTS_PROVIDER=edge` in `.env` uses the free
+`edge-tts` library (no API key). To use a paid provider instead, set:
 
-After the bot is online, an administrator can run:
+```
+TTS_PROVIDER=elevenlabs   # or openai
+TTS_API_KEY=your_key
+TTS_VOICE=voice_id
+```
 
-`/onboarding setup <voice channel> <verification channel> <new member role> <verified role>`
+Setup flow in Discord:
+1. `/onboarding-panel` — set the Greetings VC, verification text channel,
+   Unverified role, and Verified role using the dropdowns.
+2. `/onboarding-lockdown` — automatically hides every other channel from
+   the Unverified role and exposes only the onboarding VC + verification
+   channel.
+3. Toggle **Enable/Disable** in the panel once both roles/channels are set.
+4. Test end-to-end: join the onboarding VC as a non-verified test account.
+   The bot connects, speaks a personalized intro, then posts a **Verify**
+   button in the verification channel.
 
-Then run `/verification panel` in the verification channel.
+Security note: the Verify button re-checks the user's verification status
+server-side on every click — visibility of the button is never the only
+gate.
 
-Set rules and welcome speech with:
-- `/onboarding message`
-- `/onboarding rules`
+## Feature map
 
-The bot reconnects to the configured onboarding VC after restart.
+| System | Slash commands |
+|---|---|
+| Voice Onboarding | `/onboarding-panel`, `/onboarding-lockdown` |
+| Verification | `/verify-panel`, `/verify-member`, `/unverify-member` |
+| Tickets | `/ticket-panel`, `/ticket-settings`, `/ticket-add`, `/ticket-remove`, `/ticket-rename`, `/ticket-reopen` |
+| Applications | `/application-create-type`, `/application-panel`, `/application-log-channel` |
+| Giveaways | `/giveaway-create`, `/giveaway-reroll`, `/giveaway-cancel` |
+| Moderation | `/ban`, `/unban`, `/kick`, `/timeout`, `/warn`, `/warnings`, `/clear`, `/slowmode`, `/lock`, `/unlock`, `/mod-log-channel` |
+| AI Chat | `/ai-settings` (requires `AI_API_KEY` in `.env`) |
+| Music | `/play`, `/skip`, `/stop`, `/queue`, `/volume` (plus in-embed buttons) |
+| Welcome/Goodbye | `/welcome-panel` |
+| Custom Commands | `/customcommand-create`, `/customcommand-manage` |
+| Statistics | `/stats` |
+| Bot Settings | `/settings-overview`, `/set-prefix`, `!sync`, `!sync-guild` |
 
-## Voice/TTS notes
+## Architecture
 
-TTS uses an interface (`TTSProvider`) and the default implementation is Edge TTS. Generated audio is cached in `data/tts`. FFmpeg is required to play MP3 audio into Discord voice.
+```
+bot.py                     # entry point, wiring, persistent view registration
+config.py                  # env-based configuration, never hardcode secrets
+database/
+  db.py                    # aiosqlite connection + full schema
+  repo.py                  # typed query functions, one section per domain
+tts/
+  base.py                  # TTSProvider interface
+  providers.py             # Edge (free) / ElevenLabs / OpenAI implementations
+  cache.py                 # disk cache for generated audio
+voice/
+  onboarding_manager.py    # the core voice onboarding engine
+cogs/                      # one file per feature system
+views/                     # buttons / selects / modals for every panel
+```
 
-A Discord voice channel can have one bot connection per guild. The implementation therefore uses a single persistent onboarding connection per guild and moves that connection to the onboarding member's voice channel only when speech is needed. If your server requires the bot to remain permanently in the fixed onboarding VC while simultaneously speaking privately to several members, Discord's guild voice model does not provide independent bot voice connections to multiple channels in the same guild. For true per-member simultaneous voice rooms, create temporary onboarding VCs and configure a dedicated bot connection per room/guild architecture.
+## Database
 
-## Tickets
+SQLite by default (`data/bot.db`), created automatically on first run.
+Tables: `guild_settings`, `members`, `onboarding_sessions`,
+`verification_log`, `tickets`, `applications`, `application_types`,
+`giveaways`, `giveaway_entries`, `warnings`, `moderation_cases`,
+`custom_commands`, `logs`.
 
-`/ticket-panel` posts the persistent ticket button. Configure `ticket_category_id` and `staff_role_id` in SQLite or extend the admin configuration command for your server.
+To move to PostgreSQL later: swap `database/db.py`'s `aiosqlite` calls for
+`asyncpg`/`psycopg` — the schema uses only portable types and `repo.py`'s
+function signatures don't need to change.
 
-Ticket records persist in SQLite. Ticket controls are registered as persistent views after restart.
+## Restart recovery
 
-## Applications
+On startup the bot:
+- reconnects to any onboarding VC that still has unverified members in it
+- re-registers persistent views for the verification button, ticket
+  panels, active giveaways, and pending applications so their
+  buttons/selects keep working
+- resumes onboarding progress from `onboarding_sessions` (stage-based,
+  so a member who left mid-greeting picks back up on rejoin)
 
-`/application-panel` posts a modal-based application panel.
-Staff can inspect with `/applications` and decide with `/application-review <id> accept|deny`.
+## Known limitations to be upfront about
 
-## Giveaways
+- Only one voice connection per guild (a Discord limitation, not a bug) —
+  if two people join the onboarding VC at once, the bot greets them one
+  after another via an internal queue rather than truly simultaneously.
+- Music playback depends on `yt-dlp`, which occasionally needs updating
+  (`pip install -U yt-dlp`) as streaming sites change their internals.
+- AI chat requires your own Anthropic API key and is a simple
+  single-channel implementation — no per-thread conversations yet.
 
-`/giveaway <duration_seconds> <winners> <prize>` creates a persistent button giveaway.
-`/giveaway-reroll <id>` rerolls.
-`/giveaway-cancel <id>` cancels.
+## Deployment Preflight
 
-## Moderation
+Run this before starting the bot:
 
-Available:
-- `/ban`
-- `/kick`
-- `/timeout`
-- `/warn`
-- `/warnings`
-- `/clear`
-- `/slowmode`
-- `/lock`
-- `/unlock`
+```bash
+python -m pip install -r requirements.txt
+python smoke_test.py
+```
 
-All destructive moderation actions use Discord permission checks and write case/warning history to SQLite.
+Music requires the `ffmpeg` executable to be installed and available on `PATH`.
+AI chat requires `AI_API_KEY`; if it is absent, AI chat remains disabled rather than crashing startup.
+A real Discord token and network connection are required for live Discord/API verification.
 
-## AI
+### Android / Termux
 
-Configure `AI_API_KEY`, `AI_BASE_URL`, and `AI_MODEL`. `/ai <prompt>` uses an OpenAI-compatible chat-completions endpoint. API keys are never hardcoded.
+```bash
+pkg update
+pkg install python ffmpeg -y
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+python smoke_test.py
+python bot.py
+```
 
-## Music
-
-`/play`, `/pause`, `/resume`, `/skip`, `/stop` are included. Music uses yt-dlp + FFmpeg. Respect the terms and policies of any media service you use.
-
-## Security
-
-Never commit `.env`, the SQLite database, or generated TTS audio to source control. Keep the bot's role below only the roles it is intended to manage, and above `New Member`/`Verified` if it must assign them.
-
-## QA checklist
-
-Before production:
-- Test new-member role assignment.
-- Test category/channel overwrites with a non-admin test account.
-- Test joining/leaving/rejoining onboarding VC.
-- Test bot restart and voice reconnection.
-- Test verification role changes.
-- Test ticket controls after restart.
-- Test application persistence.
-- Test giveaway ending/reroll/cancel.
-- Test moderation hierarchy and permissions.
-- Test FFmpeg/TTS on the actual host.
-- Test AI provider rate/error responses.
-
-## Scope note
-
-This package is a complete runnable baseline with real implementations for the requested systems. Server-specific Discord permission layouts, third-party API credentials, FFmpeg installation, and provider policies necessarily depend on the deployment environment.
+Never put `DISCORD_TOKEN` or API keys into source files. Keep them in `.env`.

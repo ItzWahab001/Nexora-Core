@@ -1,82 +1,113 @@
-import asyncio, random
-from datetime import datetime, timedelta, timezone
+import random
+import time
+
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
-from utils.embeds import embed
-from views.giveaways import GiveawayView
+
+from database import repo
+from utils.checks import require_admin
+from utils.embeds import success_embed, error_embed, panel_embed
+from views.giveaway_views import GiveawayView
+
+
+def parse_duration(text: str) -> int:
+    """Parses '10m', '2h', '1d' style durations into seconds."""
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    text = text.strip().lower()
+    if text[-1] in units and text[:-1].isdigit():
+        return int(text[:-1]) * units[text[-1]]
+    if text.isdigit():
+        return int(text)
+    raise ValueError("Duration must look like 30s, 10m, 2h, or 1d")
+
 
 class Giveaways(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.tasks = {}
-        self.finish_loop.start()
+        self.db = bot.db
+        self.check_giveaways.start()
 
-    def cog_unload(self): self.finish_loop.cancel()
+    def cog_unload(self):
+        self.check_giveaways.cancel()
 
-    @commands.hybrid_command(name="giveaway")
-    @commands.has_guild_permissions(manage_guild=True)
-    async def giveaway(self, ctx, duration_seconds: int, winners: int, *, prize: str):
-        if duration_seconds < 10 or winners < 1:
-            return await ctx.send("Use at least 10 seconds and one winner.")
-        ends = datetime.now(timezone.utc) + timedelta(seconds=duration_seconds)
-        cur = await self.bot.db.execute("INSERT INTO giveaways(guild_id,channel_id,prize,winners,ends_at) VALUES(?,?,?,?,?)",
-                                        (ctx.guild.id, ctx.channel.id, prize, winners, ends.isoformat()))
-        gid = cur.lastrowid
-        msg = await ctx.send(embed=embed("🎁 Giveaway", f"**Prize:** {prize}\n**Winners:** {winners}\n**Ends:** <t:{int(ends.timestamp())}:R>"),
-                             view=GiveawayView(self.bot))
-        await self.bot.db.execute("UPDATE giveaways SET message_id=? WHERE id=?", (msg.id, gid))
-        await ctx.send(f"Giveaway #{gid} created.", delete_after=5)
+    @tasks.loop(seconds=15)
+    async def check_giveaways(self):
+        active = await repo.get_active_giveaways(self.db)
+        now = time.time()
+        for g in active:
+            if g["ends_at"] and g["ends_at"] <= now:
+                await self._finish_giveaway(g["giveaway_id"])
 
-    async def enter(self, interaction):
-        msg = await self.bot.db.fetchone("SELECT * FROM giveaways WHERE message_id=? AND status='active'", (interaction.message.id,))
-        if not msg: return await interaction.response.send_message("This giveaway is no longer active.", ephemeral=True)
-        await self.bot.db.execute("INSERT OR IGNORE INTO giveaway_entries(giveaway_id,user_id) VALUES(?,?)",
-                                  (msg["id"], interaction.user.id))
-        await interaction.response.send_message("🎟️ Entry recorded!", ephemeral=True)
+    @check_giveaways.before_loop
+    async def before_check(self):
+        await self.bot.wait_until_ready()
 
-    @commands.hybrid_command(name="giveaway-reroll")
-    @commands.has_guild_permissions(manage_guild=True)
-    async def reroll(self, ctx, giveaway_id: int):
-        await self._finish(giveaway_id, reroll=True, channel=ctx.channel)
-        await ctx.send("Reroll processed.")
+    async def _finish_giveaway(self, giveaway_id: int, reroll: bool = False):
+        g = await self.db.fetchone("SELECT * FROM giveaways WHERE giveaway_id=?", (giveaway_id,))
+        if not g:
+            return
+        guild = self.bot.get_guild(g["guild_id"])
+        channel = guild.get_channel(g["channel_id"]) if guild else None
+        entries = await repo.get_entries(self.db, giveaway_id)
 
-    @commands.hybrid_command(name="giveaway-cancel")
-    @commands.has_guild_permissions(manage_guild=True)
-    async def cancel(self, ctx, giveaway_id: int):
-        await self.bot.db.execute("UPDATE giveaways SET status='cancelled' WHERE id=? AND guild_id=?", (giveaway_id,ctx.guild.id))
-        await ctx.send("Giveaway cancelled.")
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        for row in await self.bot.db.fetchall("SELECT id,ends_at FROM giveaways WHERE status='active'"):
-            pass
-
-    @tasks.loop(seconds=5)
-    async def finish_loop(self):
-        rows = await self.bot.db.fetchall("SELECT * FROM giveaways WHERE status='active'")
-        now = datetime.now(timezone.utc)
-        for row in rows:
-            try: ends = datetime.fromisoformat(row["ends_at"])
-            except ValueError: continue
-            if ends <= now:
-                guild = self.bot.get_guild(row["guild_id"])
-                channel = guild.get_channel(row["channel_id"]) if guild else None
-                await self._finish(row["id"], channel=channel)
-
-    async def _finish(self, giveaway_id, reroll=False, channel=None):
-        row = await self.bot.db.fetchone("SELECT * FROM giveaways WHERE id=?", (giveaway_id,))
-        if not row: return
-        entries = await self.bot.db.fetchall("SELECT user_id FROM giveaway_entries WHERE giveaway_id=?", (giveaway_id,))
-        pool = [e["user_id"] for e in entries]
-        if not pool: winners = []
-        else: winners = random.sample(pool, min(row["winners"], len(pool)))
+        if not entries:
+            if channel:
+                await channel.send(embed=error_embed("Giveaway ended", f"**{g['prize']}** had no valid entries."))
+        else:
+            winners = random.sample(entries, k=min(g["winner_count"], len(entries)))
+            mentions = ", ".join(f"<@{w}>" for w in winners)
+            if channel:
+                await channel.send(embed=success_embed(
+                    "🎉 Giveaway ended!" if not reroll else "🔁 Giveaway rerolled!",
+                    f"**{g['prize']}**\nWinner(s): {mentions}",
+                ))
         if not reroll:
-            await self.bot.db.execute("UPDATE giveaways SET status='ended' WHERE id=?", (giveaway_id,))
-        ch = channel
-        if not ch:
-            guild = self.bot.get_guild(row["guild_id"]); ch = guild.get_channel(row["channel_id"]) if guild else None
-        if ch:
-            mentions = ", ".join(f"<@{u}>" for u in winners) or "No valid entries."
-            await ch.send(embed=embed("🎉 Giveaway Ended", f"**{row['prize']}**\nWinners: {mentions}"))
+            await repo.end_giveaway(self.db, giveaway_id, "ended")
 
-async def setup(bot): await bot.add_cog(Giveaways(bot))
+    @app_commands.command(name="giveaway-create", description="Start a new giveaway")
+    @app_commands.describe(prize="What's being given away", duration="e.g. 10m, 2h, 1d",
+                            winners="Number of winners", requirement_role="Role required to enter (optional)")
+    @require_admin()
+    async def create(self, interaction: discord.Interaction, prize: str, duration: str,
+                      winners: app_commands.Range[int, 1, 20] = 1,
+                      requirement_role: discord.Role | None = None):
+        try:
+            seconds = parse_duration(duration)
+        except ValueError as e:
+            await interaction.response.send_message(embed=error_embed("Invalid duration", str(e)), ephemeral=True)
+            return
+
+        ends_at = time.time() + seconds
+        giveaway_id = await repo.create_giveaway(
+            self.db, interaction.guild_id, interaction.channel_id, prize, winners,
+            interaction.user.id, ends_at, requirement_role.id if requirement_role else None,
+        )
+        embed = panel_embed(
+            "🎉 GIVEAWAY 🎉", f"**Prize:** {prize}",
+            fields=[
+                ("Winners", str(winners), True),
+                ("Hosted by", interaction.user.mention, True),
+                ("Ends", f"<t:{int(ends_at)}:R>", True),
+            ] + ([("Requirement", requirement_role.mention, True)] if requirement_role else []),
+        )
+        view = GiveawayView(self.db, giveaway_id)
+        await interaction.response.send_message(embed=embed, view=view)
+        msg = await interaction.original_response()
+        await repo.set_giveaway_message(self.db, giveaway_id, msg.id)
+
+    @app_commands.command(name="giveaway-reroll", description="Reroll winners for an ended giveaway")
+    @require_admin()
+    async def reroll(self, interaction: discord.Interaction, giveaway_id: int):
+        await self._finish_giveaway(giveaway_id, reroll=True)
+        await interaction.response.send_message("Rerolled.", ephemeral=True)
+
+    @app_commands.command(name="giveaway-cancel", description="Cancel an active giveaway with no winners")
+    @require_admin()
+    async def cancel(self, interaction: discord.Interaction, giveaway_id: int):
+        await repo.end_giveaway(self.db, giveaway_id, "cancelled")
+        await interaction.response.send_message(embed=success_embed("Giveaway cancelled"), ephemeral=True)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Giveaways(bot))
