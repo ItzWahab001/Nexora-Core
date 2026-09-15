@@ -10,9 +10,6 @@
   "type": "module",
   "keywords": [],
   "author": "uo1428",
-  "devDependencies": {
-    "node": "^20.16.0"
-  },
   "dependencies": {
     "@discordjs/rest": "^0.4.1",
     "@google/generative-ai": "^0.1.3",
@@ -20,6 +17,7 @@
     "axios": "^1.7.3",
     "booru": "^2.6.7",
     "boxen": "^8.0.1",
+    "canvafy": "^7.1.0",
     "cheerio": "1.0.0-rc.12",
     "colors": "^1.4.0",
     "common-tags": "^1.8.2",
