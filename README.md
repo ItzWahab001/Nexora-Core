@@ -45,9 +45,10 @@ Run the bot:
 python bot.py
 ```
 
-On first run, DM the bot's owner account and use the text command
-`!sync` (owner-only) once to register slash commands globally, or
-`!sync-guild` while inside your test server for instant per-guild sync.
+Slash commands are synced automatically on startup. For instant sync in a
+specific test server, set `SYNC_GUILD_ID` in the environment; otherwise
+global commands are synced (Discord may take some time to propagate global
+commands). The owner-only `!sync` and `!sync-guild` commands remain available.
 
 ## Voice Onboarding — the core feature
 
@@ -85,7 +86,7 @@ gate.
 | Applications | `/application-create-type`, `/application-panel`, `/application-log-channel` |
 | Giveaways | `/giveaway-create`, `/giveaway-reroll`, `/giveaway-cancel` |
 | Moderation | `/ban`, `/unban`, `/kick`, `/timeout`, `/warn`, `/warnings`, `/clear`, `/slowmode`, `/lock`, `/unlock`, `/mod-log-channel` |
-| AI Chat | `/ai-settings` (requires `AI_API_KEY` in `.env`) |
+| AI Chat | `/ai` and `/ai-settings` (Gemini via `GEMINI_API_KEY`, or Anthropic fallback) |
 | Music | `/play`, `/skip`, `/stop`, `/queue`, `/volume` (plus in-embed buttons) |
 | Welcome/Goodbye | `/welcome-panel` |
 | Custom Commands | `/customcommand-create`, `/customcommand-manage` |
@@ -137,33 +138,12 @@ On startup the bot:
 - Only one voice connection per guild (a Discord limitation, not a bug) —
   if two people join the onboarding VC at once, the bot greets them one
   after another via an internal queue rather than truly simultaneously.
-- Music playback depends on `yt-dlp`, which occasionally needs updating
-  (`pip install -U yt-dlp`) as streaming sites change their internals.
-- AI chat requires your own Anthropic API key and is a simple
-  single-channel implementation — no per-thread conversations yet.
-
-## Deployment Preflight
-
-Run this before starting the bot:
-
-```bash
-python -m pip install -r requirements.txt
-python smoke_test.py
-```
-
-Music requires the `ffmpeg` executable to be installed and available on `PATH`.
-AI chat requires `AI_API_KEY`; if it is absent, AI chat remains disabled rather than crashing startup.
-A real Discord token and network connection are required for live Discord/API verification.
-
-### Android / Termux
-
-```bash
-pkg update
-pkg install python ffmpeg -y
-python -m pip install -U pip
-python -m pip install -r requirements.txt
-python smoke_test.py
-python bot.py
-```
-
-Never put `DISCORD_TOKEN` or API keys into source files. Keep them in `.env`.
+- Music playback depends on `yt-dlp` and FFmpeg. YouTube can change its
+  playback/extraction requirements, so `yt-dlp` may need updates over time.
+  A YouTube Data API key is not required for the included playback path.
+- AI chat supports Gemini through `GEMINI_API_KEY` (preferred) and Anthropic
+  through `AI_API_KEY` as a fallback. `/ai` is available directly, while
+  `/ai-settings` enables automatic replies in a configured channel.
+- Railway's filesystem is ephemeral unless you attach persistent storage;
+  for durable SQLite data, attach a Railway Volume and point `DATABASE_PATH`
+  at its mounted path.

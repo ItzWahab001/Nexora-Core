@@ -36,7 +36,7 @@ class Applications(commands.Cog):
         types = await repo.get_application_types(self.db, interaction.guild_id)
         embed = panel_embed("📝 Applications", "Select an application type below to apply.",
                              fields=[(t["app_type"], "Open", True) for t in types] or None)
-        await interaction.channel.send(embed=embed, view=ApplicationPanelView(self.db, [dict(t) for t in types], interaction.guild_id))
+        await interaction.channel.send(embed=embed, view=ApplicationPanelView(self.db, interaction.guild_id, [dict(t) for t in types]))
         await interaction.response.send_message("Application panel posted.", ephemeral=True)
 
     @app_commands.command(name="application-log-channel", description="Set where submitted applications are sent for review")

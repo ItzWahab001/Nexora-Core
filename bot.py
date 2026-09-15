@@ -17,6 +17,7 @@ from views.verification_views import VerificationView
 from views.ticket_views import TicketPanelView, TicketControlView
 from views.giveaway_views import GiveawayView
 from views.application_views import ApplicationPanelView, ApplicationReviewView
+from views.music_views import MusicControlView
 
 setup_logging()
 logger = logging.getLogger("bot")
@@ -68,8 +69,24 @@ class DiscordBot(commands.Bot):
         self.add_view(VerificationView(self.db))
         self.add_view(TicketPanelView(self.db))
         self.add_view(TicketControlView(self.db))
+        # One generic persistent music view works for every guild because callbacks
+        # resolve the guild from the interaction.
+        self.add_view(MusicControlView(self, 0))
 
         await self._register_dynamic_persistent_views()
+
+        # Always sync global commands on deployment. If SYNC_GUILD_ID is set,
+        # also copy them to that guild for immediate availability during testing.
+        try:
+            synced = await self.tree.sync()
+            logger.info("Synced %d global application commands", len(synced))
+            if CONFIG.sync_guild_id:
+                guild = discord.Object(id=int(CONFIG.sync_guild_id))
+                self.tree.copy_global_to(guild=guild)
+                guild_synced = await self.tree.sync(guild=guild)
+                logger.info("Synced %d application commands to guild %s", len(guild_synced), CONFIG.sync_guild_id)
+        except Exception:
+            logger.exception("Application command sync failed")
 
     async def _register_dynamic_persistent_views(self):
         """Re-register per-ID persistent views (giveaways, pending applications,
@@ -84,7 +101,7 @@ class DiscordBot(commands.Bot):
 
         for guild in self.guilds:
             types = await repo.get_application_types(self.db, guild.id)
-            self.add_view(ApplicationPanelView(self.db, [dict(t) for t in types], guild.id))
+            self.add_view(ApplicationPanelView(self.db, guild.id, [dict(t) for t in types]))
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} ({self.user.id}) — {len(self.guilds)} guild(s)")
@@ -98,11 +115,18 @@ class DiscordBot(commands.Bot):
         logger.exception("Unhandled prefix command error", exc_info=error)
 
     async def on_app_command_error_default(self, interaction: discord.Interaction, error: Exception):
+        # Permission predicates may already have sent an ephemeral response.
+        if isinstance(error, discord.app_commands.CheckFailure) and interaction.response.is_done():
+            return
         logger.exception("Unhandled app command error", exc_info=error)
-        if interaction.response.is_done():
-            await interaction.followup.send("Something went wrong running that command.", ephemeral=True)
-        else:
-            await interaction.response.send_message("Something went wrong running that command.", ephemeral=True)
+        message = "Something went wrong running that command. Check the Railway logs for details."
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except discord.HTTPException:
+            logger.exception("Failed to send application-command error response")
 
     async def close(self):
         await self.db.close()

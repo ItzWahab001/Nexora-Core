@@ -37,36 +37,36 @@ class Tickets(commands.Cog):
 
     @app_commands.command(name="ticket-add", description="Add a user to the current ticket")
     async def ticket_add(self, interaction: discord.Interaction, member: discord.Member):
-        if not isinstance(interaction.user, discord.Member) or not is_staff(interaction.user):
-            await interaction.response.send_message("Only staff can manage ticket access/names.", ephemeral=True)
-            return
         ticket = await repo.get_ticket_by_channel(self.db, interaction.channel_id)
         if not ticket:
             await interaction.response.send_message("This isn't a ticket channel.", ephemeral=True)
+            return
+        if not isinstance(interaction.user, discord.Member) or not is_staff(interaction.user):
+            await interaction.response.send_message("Only staff can manage ticket members.", ephemeral=True)
             return
         await interaction.channel.set_permissions(member, view_channel=True, send_messages=True, read_message_history=True)
         await interaction.response.send_message(embed=success_embed("User added", f"{member.mention} can now see this ticket."))
 
     @app_commands.command(name="ticket-remove", description="Remove a user from the current ticket")
     async def ticket_remove(self, interaction: discord.Interaction, member: discord.Member):
-        if not isinstance(interaction.user, discord.Member) or not is_staff(interaction.user):
-            await interaction.response.send_message("Only staff can manage ticket access/names.", ephemeral=True)
-            return
         ticket = await repo.get_ticket_by_channel(self.db, interaction.channel_id)
         if not ticket:
             await interaction.response.send_message("This isn't a ticket channel.", ephemeral=True)
+            return
+        if not isinstance(interaction.user, discord.Member) or not is_staff(interaction.user):
+            await interaction.response.send_message("Only staff can manage ticket members.", ephemeral=True)
             return
         await interaction.channel.set_permissions(member, overwrite=None)
         await interaction.response.send_message(embed=success_embed("User removed", f"{member.mention} no longer has access."))
 
     @app_commands.command(name="ticket-rename", description="Rename the current ticket channel")
     async def ticket_rename(self, interaction: discord.Interaction, new_name: str):
-        if not isinstance(interaction.user, discord.Member) or not is_staff(interaction.user):
-            await interaction.response.send_message("Only staff can manage ticket access/names.", ephemeral=True)
-            return
         ticket = await repo.get_ticket_by_channel(self.db, interaction.channel_id)
         if not ticket:
             await interaction.response.send_message("This isn't a ticket channel.", ephemeral=True)
+            return
+        if not isinstance(interaction.user, discord.Member) or not is_staff(interaction.user):
+            await interaction.response.send_message("Only staff can rename tickets.", ephemeral=True)
             return
         await interaction.channel.edit(name=new_name[:95])
         await interaction.response.send_message(embed=success_embed("Renamed", f"Channel renamed to `{new_name}`."))
@@ -75,10 +75,6 @@ class Tickets(commands.Cog):
     async def ticket_reopen(self, interaction: discord.Interaction, ticket_id: int):
         if not isinstance(interaction.user, discord.Member) or not is_staff(interaction.user):
             await interaction.response.send_message("Only staff can reopen tickets.", ephemeral=True)
-            return
-        ticket = await self.db.fetchone("SELECT * FROM tickets WHERE ticket_id=? AND guild_id=?", (ticket_id, interaction.guild_id))
-        if not ticket:
-            await interaction.response.send_message("Ticket not found in this server.", ephemeral=True)
             return
         await self.db.execute("UPDATE tickets SET status='open', closed_at=NULL WHERE ticket_id=?", (ticket_id,))
         await interaction.response.send_message(embed=success_embed("Ticket reopened", f"Ticket #{ticket_id} marked open again."), ephemeral=True)

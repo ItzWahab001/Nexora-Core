@@ -1,5 +1,6 @@
 import logging
 import time
+import aiohttp
 
 import discord
 from discord import app_commands
@@ -23,12 +24,74 @@ class AIChat(commands.Cog):
         self._last_use: dict[int, float] = {}
         self._history: dict[int, list[dict]] = {}
         self._client = None
-        if CONFIG.ai_api_key:
+        self._gemini_key = CONFIG.gemini_api_key
+        self._gemini_model = CONFIG.gemini_model
+        if CONFIG.ai_api_key and not self._gemini_key:
             try:
                 import anthropic
                 self._client = anthropic.AsyncAnthropic(api_key=CONFIG.ai_api_key, base_url=CONFIG.ai_base_url)
             except ImportError:
-                logger.warning("anthropic package not installed; AI chat disabled")
+                logger.warning("anthropic package not installed; Anthropic AI disabled")
+
+    async def _generate_gemini(self, history: list[dict]) -> str:
+        contents = []
+        for item in history:
+            role = "model" if item["role"] == "assistant" else "user"
+            contents.append({"role": role, "parts": [{"text": item["content"]}]})
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self._gemini_model}:generateContent?key={self._gemini_key}"
+        )
+        payload = {"contents": contents, "generationConfig": {"maxOutputTokens": 600}}
+        timeout = aiohttp.ClientTimeout(total=45)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload) as resp:
+                data = await resp.json(content_type=None)
+                if resp.status >= 400:
+                    raise RuntimeError(data.get("error", {}).get("message", f"Gemini HTTP {resp.status}"))
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = "".join(p.get("text", "") for p in parts if p.get("text"))
+        if not text:
+            raise RuntimeError("Gemini returned an empty response")
+        return text[:8000]
+
+    async def _generate(self, history: list[dict]) -> str:
+        if self._gemini_key:
+            return await self._generate_gemini(history)
+        if self._client:
+            response = await self._client.messages.create(
+                model=CONFIG.ai_model, max_tokens=600, messages=history
+            )
+            return "".join(block.text for block in response.content if block.type == "text")
+        raise RuntimeError("AI is not configured. Add GEMINI_API_KEY or AI_API_KEY in Railway Variables.")
+
+    async def _answer(self, interaction: discord.Interaction, prompt: str):
+        if not self._gemini_key and not self._client:
+            await interaction.response.send_message(
+                embed=error_embed("AI not configured", "Add GEMINI_API_KEY (recommended) or AI_API_KEY in Railway Variables."),
+                ephemeral=True,
+            )
+            return
+        history = self._history.setdefault(interaction.channel_id, [])
+        history.append({"role": "user", "content": prompt})
+        history[:] = history[-MAX_CONTEXT_MESSAGES:]
+        await interaction.response.defer()
+        try:
+            reply = await self._generate(history)
+        except Exception:
+            logger.exception("AI API call failed")
+            history.pop()
+            await interaction.followup.send(
+                embed=error_embed("AI error", "The AI service is temporarily unavailable. Check the API key/model and try again."),
+                ephemeral=True,
+            )
+            return
+        history.append({"role": "assistant", "content": reply})
+        await interaction.followup.send(reply[:2000])
+
+    @app_commands.command(name="ai", description="Ask the configured AI assistant")
+    async def ai(self, interaction: discord.Interaction, prompt: str):
+        await self._answer(interaction, prompt)
 
     @app_commands.command(name="ai-settings", description="Configure the AI chat channel")
     @require_admin()
@@ -46,7 +109,7 @@ class AIChat(commands.Cog):
         settings = await repo.get_guild_settings(self.db, message.guild.id)
         if not settings["ai_enabled"] or message.channel.id != settings["ai_channel_id"]:
             return
-        if not self._client:
+        if not self._client and not self._gemini_key:
             return
 
         now = time.time()
@@ -61,15 +124,11 @@ class AIChat(commands.Cog):
 
         async with message.channel.typing():
             try:
-                response = await self._client.messages.create(
-                    model=CONFIG.ai_model,
-                    max_tokens=600,
-                    messages=history,
-                )
-                reply = "".join(block.text for block in response.content if block.type == "text")
-            except Exception as e:
+                reply = await self._generate(history)
+            except Exception:
                 logger.exception("AI API call failed")
-                await message.reply(embed=error_embed("AI error", "The AI service is temporarily unavailable. Try again shortly."))
+                history.pop()
+                await message.reply(embed=error_embed("AI error", "The AI service is temporarily unavailable. Check the API key/model and try again."))
                 return
 
         history.append({"role": "assistant", "content": reply})

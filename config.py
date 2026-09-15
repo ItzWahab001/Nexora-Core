@@ -28,6 +28,9 @@ class Config:
     ai_api_key: str = _get("AI_API_KEY", "")
     ai_base_url: str = _get("AI_BASE_URL", "https://api.anthropic.com")
     ai_model: str = _get("AI_MODEL", "claude-sonnet-4-5")
+    gemini_api_key: str = _get("GEMINI_API_KEY", "")
+    gemini_model: str = _get("GEMINI_MODEL", "gemini-2.5-flash")
+    sync_guild_id: str = _get("SYNC_GUILD_ID", "")
 
     log_level: str = _get("LOG_LEVEL", "INFO")
 

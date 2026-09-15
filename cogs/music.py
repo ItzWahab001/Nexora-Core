@@ -58,6 +58,9 @@ class Music(commands.Cog):
         return self._states[guild.id]
 
     async def _extract(self, query: str) -> Track | None:
+        if shutil.which("ffmpeg") is None:
+            logger.error("FFmpeg is not installed or not on PATH")
+            return None
         try:
             import yt_dlp
         except ImportError:
@@ -81,7 +84,7 @@ class Music(commands.Cog):
         return Track(title=info.get("title", "Unknown"), url=info.get("webpage_url", query),
                      stream_url=info["url"], requester_id=0, duration=info.get("duration", 0))
 
-    async def _play_next(self, guild: discord.Guild):
+    def _play_next(self, guild: discord.Guild):
         state = self._state(guild)
         if state.loop and state.current:
             state.queue.appendleft(state.current)
@@ -90,30 +93,17 @@ class Music(commands.Cog):
             return
         track = state.queue.popleft()
         state.current = track
-        if shutil.which("ffmpeg") is None:
-            logger.error("FFmpeg executable not found on PATH")
-            state.current = None
-            if state.text_channel:
-                await state.text_channel.send(embed=error_embed("FFmpeg missing", "Install FFmpeg and make sure `ffmpeg` is available on PATH."))
-            return
-
         source = discord.PCMVolumeTransformer(
             discord.FFmpegPCMAudio(track.stream_url, **FFMPEG_OPTS), volume=state.volume
         )
 
         def _after(err):
             if err:
-                logger.error(f"Music playback error: {err}")
-            asyncio.run_coroutine_threadsafe(self._play_next(guild), self.bot.loop)
+                logger.error("Music playback error: %s", err)
+            self.bot.loop.call_soon_threadsafe(self._play_next, guild)
 
         if state.voice_client and state.voice_client.is_connected():
-            try:
-                state.voice_client.play(source, after=_after)
-            except Exception:
-                logger.exception("Failed to start FFmpeg playback")
-                state.current = None
-                if state.text_channel:
-                    await state.text_channel.send(embed=error_embed("Playback error", "FFmpeg could not start playback for this track."))
+            state.voice_client.play(source, after=_after)
             if state.text_channel:
                 asyncio.run_coroutine_threadsafe(
                     state.text_channel.send(
@@ -132,8 +122,17 @@ class Music(commands.Cog):
         state = self._state(interaction.guild)
         state.text_channel = interaction.channel
 
+        if shutil.which("ffmpeg") is None:
+            await interaction.followup.send(embed=error_embed("FFmpeg missing", "Music playback needs FFmpeg on the Railway server."))
+            return
+
         if state.voice_client is None or not state.voice_client.is_connected():
-            state.voice_client = await interaction.user.voice.channel.connect(reconnect=True)
+            try:
+                state.voice_client = await interaction.user.voice.channel.connect(reconnect=True)
+            except (discord.Forbidden, discord.ClientException) as e:
+                logger.exception("Voice connection failed")
+                await interaction.followup.send(embed=error_embed("Voice connection failed", str(e)[:1000]))
+                return
 
         track = await self._extract(query)
         if track is None:
@@ -144,7 +143,11 @@ class Music(commands.Cog):
         await interaction.followup.send(embed=success_embed("Queued", track.title))
 
         if not state.voice_client.is_playing() and not state.voice_client.is_paused():
-            await self._play_next(interaction.guild)
+            try:
+                self._play_next(interaction.guild)
+            except (discord.ClientException, FileNotFoundError, OSError) as e:
+                logger.exception("Could not start FFmpeg playback")
+                await interaction.followup.send(embed=error_embed("Playback failed", f"FFmpeg could not start: {e}"))
 
     async def pause(self, guild: discord.Guild) -> bool:
         state = self._state(guild)

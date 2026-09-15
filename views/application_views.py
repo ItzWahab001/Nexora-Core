@@ -42,15 +42,14 @@ class DynamicApplicationModal(discord.ui.Modal):
 class ApplicationPanelView(discord.ui.View):
     """Persistent panel — select an application type to fill out a modal."""
 
-    def __init__(self, db: Database, app_types: list[dict], guild_id: int | None = None):
+    def __init__(self, db: Database, guild_id: int, app_types: list[dict]):
         super().__init__(timeout=None)
         self.db = db
         self.guild_id = guild_id
-        custom_id = f"applications:select:{guild_id}" if guild_id else "applications:select"
         options = [discord.SelectOption(label=t["app_type"], value=t["app_type"]) for t in app_types] or \
                   [discord.SelectOption(label="No applications open", value="__none__")]
         select = discord.ui.Select(placeholder="📝 Choose an application to apply for",
-                                    options=options, custom_id=custom_id)
+                                    options=options, custom_id=f"applications:select:{guild_id}")
         select.callback = self.on_select
         self.add_item(select)
 
