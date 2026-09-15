@@ -1,5 +1,4 @@
-__pycache__/
-*.py[cod]
+node_modules
+package-lock.json
 .env
-logs/*.log
-data/*.db
+Database
