@@ -1,4 +1,9 @@
-node_modules
-package-lock.json
+node_modules/
 .env
-Database
+.env.*
+!.env.example
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+ASTRYX/logs/*.log
+ASTRYX/.command_hash
